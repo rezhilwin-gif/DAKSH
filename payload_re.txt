@@ -1,0 +1,10 @@
+Req 1 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=8&StudentID=127839 , 
+Req 2 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=15&StudentID=127839 , 
+Req 3 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=17&StudentID=127839 , 
+Req 4 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=12&StudentID=127839 , 
+Req 5 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=10&StudentID=127839 , 
+Req 6 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=14&StudentID=127839 , 
+Req 7 : https://webstream.sastra.edu/academyweb/academyCBC/frmStudentTimetable.jsp?StudentId=127839&SemesterId=6 , 
+Req 8 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=3&StudentID=127839&ArchiveTransID=0&SemesterID=6 , 
+Req 9 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=25&StudentID=127839 , 
+Req 10 : https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=4&StudentID=127839&ProgramID=270&ArchiveTransID=0&SemesterID=6
