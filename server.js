@@ -5,10 +5,90 @@ import { CookieJar } from "tough-cookie";
 import * as cheerio from "cheerio";
 import cors from "cors";
 import ExcelJS from "exceljs";
+import compression from "compression";
 
 const app = express();
+app.use(compression()); // Compress all responses
 app.use(express.json());
 app.use(cors());
+
+// =====================================================
+// 🚀 PERFORMANCE OPTIMIZATIONS
+// =====================================================
+
+// Session cache - reuse authenticated sessions
+const sessionCache = new Map();
+const SESSION_TTL = 10 * 60 * 1000; // 10 minutes
+
+// Data cache - cache dashboard responses
+const dataCache = new Map();
+const DATA_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Helper: Get or create authenticated client
+async function getAuthenticatedClient(username, password) {
+    const cacheKey = `${username}:${password}`;
+    const cached = sessionCache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < SESSION_TTL) {
+        console.log("✅ Using cached session for:", username);
+        return cached.client;
+    }
+    
+    console.log("🔐 Creating new session for:", username);
+    const jar = new CookieJar();
+    const client = wrapper(axios.create({
+        jar,
+        withCredentials: true,
+        maxRedirects: 3,
+        timeout: 20000,
+        headers: {
+            'Connection': 'keep-alive'
+        }
+    }));
+    
+    await client.get("https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp");
+    await client.post(
+        "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp",
+        new URLSearchParams({
+            txtSK: password,
+            txtAN: username,
+            _tries: "1",
+            _md5: "",
+            txtPageAction: "1",
+            login: username,
+            passwd: password,
+            _save: "Log In"
+        }),
+        {
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://webstream.sastra.edu",
+                "Referer": "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp"
+            }
+        }
+    );
+    
+    sessionCache.set(cacheKey, { client, timestamp: Date.now() });
+    console.log("✅ Session created and cached");
+    return client;
+}
+
+// Helper: Clear expired cache entries periodically
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of sessionCache.entries()) {
+        if (now - value.timestamp > SESSION_TTL) {
+            sessionCache.delete(key);
+            console.log("🧹 Cleared expired session:", key.split(':')[0]);
+        }
+    }
+    for (const [key, value] of dataCache.entries()) {
+        if (now - value.timestamp > DATA_TTL) {
+            dataCache.delete(key);
+            console.log("🧹 Cleared expired data cache:", key);
+        }
+    }
+}, 60000); // Clean every minute
 
 app.get("/", (req, res) => {
     console.log("Hello World");
@@ -66,64 +146,25 @@ app.post("/student-info", async (req, res) => {
     }
 });
 app.post("/mentor-dashboard-summary", async (req, res) => {
-    const { username, password } = req.body;
-    console.log(`📡 Login request received for: ${username}`);
+    const { username, password, forceRefresh } = req.body;
+    console.log(`📡 Dashboard request for: ${username}`);
+    
+    // Check data cache first (unless force refresh)
+    const cacheKey = `dashboard:${username}`;
+    if (!forceRefresh) {
+        const cached = dataCache.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < DATA_TTL) {
+            console.log("📦 Returning cached dashboard data");
+            return res.json(cached.data);
+        }
+    }
 
     try {
-        const jar = new CookieJar();
-        const client = wrapper(axios.create({
-            jar,
-            withCredentials: true,
-            maxRedirects: 5,
-            timeout: 30000  // 30 second timeout
-        }));
-
-        // 🔐 LOGIN
-        console.log("🔐 Step 1: Getting login page...");
-        // await client.get("https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp");
-
-        // await client.post(
-        //     "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp",
-        //     new URLSearchParams({
-        //         txtSK: password,
-        //         txtAN: username,
-        //         _tries: "1",
-        //         txtPageAction: "1",
-        //         login: username,
-        //         passwd: password,
-        //         _save: "Log In"
-        //     })
-        // );
-
-        await client.get(
-            "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp"
-        );
-        console.log("✅ Step 1 complete. Posting credentials...");
-
-        await client.post(
-            "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp",
-            new URLSearchParams({
-                txtSK: password,
-                txtAN: username,
-                _tries: "1",
-                _md5: "",
-                txtPageAction: "1",
-                login: username,
-                passwd: password,
-                _save: "Log In"
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Origin": "https://webstream.sastra.edu",
-                    "Referer":
-                        "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp"
-                }
-            }
-        );
+        // Use cached session
+        const client = await getAuthenticatedClient(username, password);
 
         // 📋 GET STUDENTS
-                const listResponse = await client.get(
+        const listResponse = await client.get(
             "https://webstream.sastra.edu/academyweb/academyReports/frmStudentInformationsResource.jsp?resourceid=1&StudentNameOrRegNo="
         );
         // console.log(listResponse);
@@ -483,19 +524,28 @@ app.post("/mentor-dashboard-summary", async (req, res) => {
             });
         }
 
-        res.json({
+        const result = {
             data: dashboardData,
             summary: {
                 total: dashboardData.length,
                 urgent: dashboardData.filter(s => s.risk === "urgent").length,
                 warning: dashboardData.filter(s => s.risk === "warning").length,
                 onTrack: dashboardData.filter(s => s.risk === "track").length
-            }
-        });
+            },
+            cachedAt: new Date().toISOString()
+        };
+        
+        // Cache the result
+        dataCache.set(cacheKey, { data: result, timestamp: Date.now() });
+        console.log("💾 Dashboard cached for:", username);
+        
+        res.json(result);
 
     } catch (err) {
         console.error("❌ Dashboard error:", err.message);
         console.error("Stack:", err.stack?.slice(0, 500));
+        // On error, invalidate session cache to force re-login
+        sessionCache.delete(`${username}:${password}`);
         res.status(500).json({ error: "Dashboard generation failed", message: err.message });
     }
 });
@@ -503,39 +553,8 @@ app.post("/all-students", async (req, res) => {
     const { username, password } = req.body;
 
     try {
-        const jar = new CookieJar();
-        const client = wrapper(axios.create({
-            jar,
-            withCredentials: true,
-            maxRedirects: 5
-        }));
-
-        // 🔐 LOGIN
-        await client.get(
-            "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp"
-        );
-
-        await client.post(
-            "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp",
-            new URLSearchParams({
-                txtSK: password,
-                txtAN: username,
-                _tries: "1",
-                _md5: "",
-                txtPageAction: "1",
-                login: username,
-                passwd: password,
-                _save: "Log In"
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Origin": "https://webstream.sastra.edu",
-                    "Referer":
-                        "https://webstream.sastra.edu/academyweb/usermanager/youLogin.jsp"
-                }
-            }
-        );
+        // Use cached session
+        const client = await getAuthenticatedClient(username, password);
 
         // 📋 FETCH STUDENT LIST
         const listResponse = await client.get(
@@ -3713,5 +3732,20 @@ app.post("/student-followups", async (req, res) => {
 });
 
 app.listen(5000, () => {
-    console.log("Server running on port 5000");
+    console.log("🚀 Server running on port 5000");
+    console.log("⚡ Optimizations enabled: compression, session caching, data caching");
 });
+
+// =====================================================
+// 🏓 KEEP-ALIVE PING (Prevents Render cold starts)
+// =====================================================
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://daksh-iyw0.onrender.com';
+
+if (process.env.NODE_ENV === 'production' || RENDER_URL.includes('render')) {
+    setInterval(() => {
+        fetch(RENDER_URL)
+            .then(() => console.log('🏓 Keep-alive ping sent'))
+            .catch(() => {});
+    }, 14 * 60 * 1000); // Every 14 minutes
+    console.log('🏓 Keep-alive ping scheduled every 14 minutes');
+}
