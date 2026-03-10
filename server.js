@@ -128,6 +128,8 @@ app.post("/mentor-dashboard-summary", async (req, res) => {
         );
         // console.log(listResponse);
 
+        console.log("📋 Student list fetched, parsing HTML...");
+
         const $ = cheerio.load(listResponse.data);
         const students = [];
 
